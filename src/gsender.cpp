@@ -9,6 +9,9 @@
 #include <cstdint>
 #include <wx/numdlg.h>
 #include "ce/ceUtil.h"
+#include <deque>
+#include <utility>
+
 using namespace std;
 using namespace ce;
 #define N_LOG_LIST_LINES 30
@@ -54,6 +57,8 @@ public:
 	void ClearText(wxCommandEvent& event);
 	void OnSequence(wxCommandEvent& WXUNUSED(event));
 	void Write(std::string mes);
+	std::vector<std::pair<std::string, uint32_t>> _cmdLoop;
+	void ReadSeq(std::string seqtag, std::vector<std::pair<std::string, uint32_t>>& cmdv);
     // ctor(s)
 private:
 	MyApp* _app;
@@ -185,20 +190,20 @@ void MyFrame::OnAbout(wxCommandEvent& WXUNUSED(event))
 
 void MyFrame::OnOpen(wxCommandEvent& WXUNUSED(event))
 {
-	if(_app->_com->Open()) txtRx->AppendText(wxString::Format(wxT("Error opening port %s.\n"),_app->_com->GetPort()));
-	else txtRx->AppendText(wxString::Format(wxT("Port %s is opened.\n"), _app->_com->GetPort()));
+	if(_app->_com->Open()) this->Write("Error opening port " + _app->_com->GetPort());
+	else this->Write("Port opened: " + _app->_com->GetPort());
 }
 
 void MyFrame::OnClose(wxCommandEvent& WXUNUSED(event))
 {
 	_app->_com->Close();
-	txtRx->AppendText(wxString::Format(wxT("Port %s is closed.\n"), _app->_com->GetPort()));
+	this->Write("Port closed:" +  _app->_com->GetPort());
 }
 
 void MyFrame::SelPort(wxCommandEvent& WXUNUSED(event))
 {
 	if (_app->_com->IsOpened()) {
-		txtRx->AppendText(wxString::Format(wxT("Close Port %s first.\n"), _app->_com->GetPort()));
+		this->Write("Close the opening port first: " + _app->_com->GetPort());
 	}
 	else {
         wxString cdev=wxString::Format(wxT("%s"), _app->_com->GetPort());
@@ -208,20 +213,24 @@ void MyFrame::SelPort(wxCommandEvent& WXUNUSED(event))
 			_app->_com->SetPortName(str);
 		}
 
-        txtRx->AppendText(wxString::Format(wxT("Port: %s\n"), _app->_com->GetPort()));
+        this->Write("Port selected: " + _app->_com->GetPort());
 	}
 }
 
 void MyFrame::OnSend(wxCommandEvent& WXUNUSED(event))
 {
-	wxString str = "Hello";
-	wxCharBuffer buffer = str.ToUTF8();
-	if (_app->_com->Write(buffer.data())) {
-		txtRx->AppendText(str);
-	}
-	else {
-		txtRx->AppendText(wxT("Write error.\n"));
-	}
+	string gcode;
+	int dly;
+	for (auto&m : _cmdLoop) {
+		gcode = m.first;
+		dly = m.second;
+		if (_app->_com->Write((char*)gcode.c_str())) {
+			this->Write(gcode);
+		}
+		else {
+			this->Write("Error in sending " + gcode);
+		}
+	}	
 }
 
 void MyFrame::OnTimer(wxTimerEvent& WXUNUSED(event))
@@ -236,7 +245,17 @@ void MyFrame::ProcessChar(char ch)
 
 void MyFrame::Write(std::string mes)
 {
-	txtRx->AppendText(wxString::Format(wxT("%s"),mes + "\n"));
+	string txt;
+	static std::deque<std::string> list;
+	list.push_back(mes + "\n");
+	if (list.size() > 40) {
+		list.pop_front();
+	}
+	for (auto& m : list) {
+		txt += m;
+	}
+	txtRx->Clear();
+	txtRx->AppendText(wxString::Format(wxT("%s"),txt));
 }
 
 void MyFrame::ClearText(wxCommandEvent& WXUNUSED(event))
@@ -259,17 +278,37 @@ void MyFrame::OnSequence(wxCommandEvent& WXUNUSED(event))
 
 	wxString filePath = _dlgSeqFile->GetPath();
 	this->Write("Opening " + filePath.ToStdString());
+
 	try {
 		this->_seq = ceConfig::ReadJson(filePath.ToStdString());
-		for (auto const& jv : this->_seq) {
-			// std::cout<<jv<<endl;
-			// this->Print(ceConfig::ToString(jv));
-			//uint8_t delay = uint8_t(jv["delay"].asUInt());
-			//string cmd = jv["cmd"].asString();
-			//this->Send(cmd);
-		}
+		ReadSeq("Loop", _cmdLoop);
 	}
 	catch (...) {
 		this->Write("Error in json values");
+	}
+}
+
+void MyFrame::ReadSeq(std::string seqtag, std::vector<std::pair<std::string, uint32_t>>& cmdv)
+{
+	std::pair<std::string, int> m;
+	string cmd;
+	// read loop
+	Json::Value cseq = _seq[seqtag]["Sequence"];
+	cmdv.clear();
+	if (!cseq.isNull()) {
+		if (cseq.isArray()) {
+			for (auto obj : cseq) {
+				cmd = obj.asString();
+				m.first = _seq[cmd]["GCode"].asString();
+				m.second = _seq[cmd]["Delay"].asUInt();
+				cmdv.push_back(m);
+			}
+		}
+		else {
+			cmd = cseq.asString();
+			m.first = _seq[cmd]["GCode"].asString();
+			m.second = _seq[cmd]["Delay"].asUInt();
+			cmdv.push_back(m);
+		}
 	}
 }

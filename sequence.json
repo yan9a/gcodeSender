@@ -1,0 +1,24 @@
+{    
+    "Starting":{
+        "Sequence":["CMD1"],
+        "Description":"Starting sequence"
+    },
+    "Loop":{
+        "Sequence":["CMD1","CMD2"],
+        "Description":"Looping sequence"
+    },
+    "Ending":{
+        "Sequence":["CMD2"],
+        "Description":"Ending sequence"
+    },
+    "CMD1":{
+        "GCode":"G00X100.0000Y0.0000",
+        "Delay":1000,
+        "Description":"Delay in milliseconds to wait after sending the GCode"
+    },
+    "CMD2":{
+        "GCode":"G01X50.0000Y100.0000F400.0000",
+        "Delay":1000,
+        "Description":"Delay in milliseconds to wait after sending the GCode"
+    }
+}
