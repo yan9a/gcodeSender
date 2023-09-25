@@ -1,15 +1,18 @@
 {    
-    "Starting":{
-        "Sequence":["CMD1"],
-        "Description":"Starting sequence"
-    },
     "Loop":{
-        "Sequence":["CMD1","CMD2"],
+        "Sequence":["CMD0","CMD1","CMD2"],
+        "Repeat":5,
         "Description":"Looping sequence"
     },
-    "Ending":{
-        "Sequence":["CMD2"],
-        "Description":"Ending sequence"
+    "Port":{
+        "Windows":"\\\\.\\COM14",
+        "Linux":"/dev/ttyUSB0",
+        "Description":"Serial port to use e.g. \\\\.\\COM3 for Windows and /dev/ttyUSB0 for Linux"
+    },
+    "CMD0":{
+        "GCode":"$X",
+        "Delay":2000,
+        "Description":"Delay in milliseconds to wait after sending the GCode"
     },
     "CMD1":{
         "GCode":"G00X100.0000Y0.0000",

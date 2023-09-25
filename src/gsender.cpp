@@ -28,6 +28,7 @@ using namespace ce;
 #define ID_BTN_SEQUENCE 110
 #define SEQUENCE_DIR "./"
 
+#define GS_TIMER_INT 100 // timer interval
 // ----------------------------------------------------------------------------
 class MyFrame;
 class MyApp : public wxApp
@@ -36,6 +37,7 @@ public:
 	virtual bool OnInit();
 	MyFrame* _fra;
 	ceWxSerial* _com;
+	ceLog* _log;
 	void OnSerialEvent(wxThreadEvent& event);
 };
 
@@ -47,9 +49,9 @@ public:
 	// event handlers (these functions should _not_ be virtual)
 	void OnQuit(wxCommandEvent& event);
 	void OnAbout(wxCommandEvent& event);
-	void OnOpen(wxCommandEvent& event);
-	void OnClose(wxCommandEvent& event);
-	void SelPort(wxCommandEvent& event);
+	//void OnOpen(wxCommandEvent& event);
+	//void OnClose(wxCommandEvent& event);
+	//void SelPort(wxCommandEvent& event);
 	void OnClear(wxCommandEvent& event);
 	void OnSend(wxCommandEvent& event);
 	void OnTimer(wxTimerEvent& event);
@@ -58,7 +60,8 @@ public:
 	void OnSequence(wxCommandEvent& WXUNUSED(event));
 	void Write(std::string mes);
 	std::vector<std::pair<std::string, uint32_t>> _cmdLoop;
-	void ReadSeq(std::string seqtag, std::vector<std::pair<std::string, uint32_t>>& cmdv);
+	int ReadSeq(std::string seqtag, std::vector<std::pair<std::string, uint32_t>>& cmdv);
+	void ChkSeq();
     // ctor(s)
 private:
 	MyApp* _app;
@@ -68,6 +71,11 @@ private:
 	wxButton* btnSequence;
 	wxFileDialog* _dlgSeqFile;
 	Json::Value _seq;
+	int _repeat; // number of times to repeat
+	int _currentn; // number of times repeated
+	int _currenti; // current index
+	int _currentd; // current delay
+	int _en_seq; // enable sequence
 };
 
 IMPLEMENT_APP(MyApp)
@@ -89,6 +97,9 @@ bool MyApp::OnInit()
 #else
 	device = "/dev/ttyUSB0";
 #endif
+	this->_log = new ceLog(ceMisc::exedir() + "log/", 10);
+	this->_log->SetEnPrintf(false);
+	this->_log->Print("App logs " + to_string(10) + " days");
 	_com = new ceWxSerial(this, ID_MY_WXSERIAL, 10, device, 115200, 8, 'N', 1);
 	Connect(ID_MY_WXSERIAL, wxEVT_THREAD, wxThreadEventHandler(MyApp::OnSerialEvent));
 
@@ -125,10 +136,10 @@ MyFrame::MyFrame(MyApp* app, const wxString& title)
     wxMenu *helpMenu = new wxMenu;
 
     helpMenu->Append(wxID_ABOUT, wxT("&About\tF1"), wxT("Show about dialog"));
-    fileMenu->Append(ID_OPEN_MNU, wxT("&Open\tAlt-O"), wxT("Open serial port"));
-	fileMenu->Append(ID_CLOSE_MNU, wxT("&Close\tAlt-C"), wxT("Close serial port"));
+ //   fileMenu->Append(ID_OPEN_MNU, wxT("&Open\tAlt-O"), wxT("Open serial port"));
+	//fileMenu->Append(ID_CLOSE_MNU, wxT("&Close\tAlt-C"), wxT("Close serial port"));
 	fileMenu->Append(ID_CLEAR_MNU, wxT("Clea&r\tAlt-R"), wxT("Clear text"));
-	fileMenu->Append(ID_SELPORT_MNU, wxT("&Serial Port\tAlt-S"), wxT("Select serial port"));
+	//fileMenu->Append(ID_SELPORT_MNU, wxT("&Serial Port\tAlt-S"), wxT("Select serial port"));
 	fileMenu->Append(wxID_EXIT, wxT("E&xit\tAlt-X"), wxT("Quit this program"));
 
     // now append the freshly created menu to the menu bar...
@@ -151,9 +162,9 @@ MyFrame::MyFrame(MyApp* app, const wxString& title)
 	Connect(ID_BTNSTART, wxEVT_COMMAND_BUTTON_CLICKED,wxCommandEventHandler(MyFrame::OnSend));
 	Connect(wxID_ABOUT,wxEVT_COMMAND_MENU_SELECTED,wxCommandEventHandler(MyFrame::OnAbout));
 	Connect(wxID_EXIT,wxEVT_COMMAND_MENU_SELECTED,wxCommandEventHandler(MyFrame::OnQuit));
-	Connect(ID_OPEN_MNU,wxEVT_COMMAND_MENU_SELECTED,wxCommandEventHandler(MyFrame::OnOpen));
-	Connect(ID_CLOSE_MNU,wxEVT_COMMAND_MENU_SELECTED,wxCommandEventHandler(MyFrame::OnClose));
-	Connect(ID_SELPORT_MNU, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(MyFrame::SelPort));
+	//Connect(ID_OPEN_MNU,wxEVT_COMMAND_MENU_SELECTED,wxCommandEventHandler(MyFrame::OnOpen));
+	//Connect(ID_CLOSE_MNU,wxEVT_COMMAND_MENU_SELECTED,wxCommandEventHandler(MyFrame::OnClose));
+	//Connect(ID_SELPORT_MNU, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(MyFrame::SelPort));
 	Connect(ID_GTIMER,wxEVT_TIMER, wxTimerEventHandler(MyFrame::OnTimer));
 	Connect(ID_CLEAR_MNU, wxEVT_COMMAND_MENU_SELECTED, wxCommandEventHandler(MyFrame::ClearText));
 
@@ -164,7 +175,8 @@ MyFrame::MyFrame(MyApp* app, const wxString& title)
 	_dlgSeqFile = new wxFileDialog(this, wxT("Open GCode sequence file"), (SEQUENCE_DIR), "sequence.json", "JSON files (*.json)|*.json");
 	this->Centre(wxBOTH);
 
-	_timer.Start(250);
+	_timer.Start(GS_TIMER_INT-1);
+	_en_seq = 0;
 }
 
 
@@ -188,54 +200,109 @@ void MyFrame::OnAbout(wxCommandEvent& WXUNUSED(event))
         this);
 }
 
-void MyFrame::OnOpen(wxCommandEvent& WXUNUSED(event))
-{
-	if(_app->_com->Open()) this->Write("Error opening port " + _app->_com->GetPort());
-	else this->Write("Port opened: " + _app->_com->GetPort());
-}
+//void MyFrame::OnOpen(wxCommandEvent& WXUNUSED(event))
+//{
+//	if(_app->_com->Open()) this->Write("Error opening port " + _app->_com->GetPort());
+//	else this->Write("Port opened: " + _app->_com->GetPort());
+//}
 
-void MyFrame::OnClose(wxCommandEvent& WXUNUSED(event))
-{
-	_app->_com->Close();
-	this->Write("Port closed:" +  _app->_com->GetPort());
-}
+//void MyFrame::OnClose(wxCommandEvent& WXUNUSED(event))
+//{
+//	_app->_com->Close();
+//	this->Write("Port closed:" +  _app->_com->GetPort());
+//}
 
-void MyFrame::SelPort(wxCommandEvent& WXUNUSED(event))
-{
-	if (_app->_com->IsOpened()) {
-		this->Write("Close the opening port first: " + _app->_com->GetPort());
-	}
-	else {
-        wxString cdev=wxString::Format(wxT("%s"), _app->_com->GetPort());
-		wxString device = wxGetTextFromUser(wxT("Enter the port"), wxT("Set Port"), cdev);
-		string str = device.ToStdString();
-		if (str.length() > 0) {
-			_app->_com->SetPortName(str);
-		}
-
-        this->Write("Port selected: " + _app->_com->GetPort());
-	}
-}
+//void MyFrame::SelPort(wxCommandEvent& WXUNUSED(event))
+//{
+//	if (_app->_com->IsOpened()) {
+//		this->Write("Close the opening port first: " + _app->_com->GetPort());
+//	}
+//	else {
+//        wxString cdev=wxString::Format(wxT("%s"), _app->_com->GetPort());
+//		wxString device = wxGetTextFromUser(wxT("Enter the port"), wxT("Set Port"), cdev);
+//		string str = device.ToStdString();
+//		if (str.length() > 0) {
+//			_app->_com->SetPortName(str);
+//		}
+//
+//        this->Write("Port selected: " + _app->_com->GetPort());
+//	}
+//}
 
 void MyFrame::OnSend(wxCommandEvent& WXUNUSED(event))
 {
-	string gcode;
-	int dly;
-	for (auto&m : _cmdLoop) {
-		gcode = m.first;
-		dly = m.second;
-		if (_app->_com->Write((char*)gcode.c_str())) {
-			this->Write(gcode);
-		}
-		else {
-			this->Write("Error in sending " + gcode);
-		}
-	}	
+	_currentn = 0;
+	_currenti = 0;
+	_currentd = 0;
+	_en_seq = 1;
+
+	this->Write("Started sending gcode...");
+
+	if (_app->_com->Open()) this->Write("Error opening port " + _app->_com->GetPort());
+	else this->Write("Port opened: " + _app->_com->GetPort());
+
+
 }
 
 void MyFrame::OnTimer(wxTimerEvent& WXUNUSED(event))
 {
+	ChkSeq();
+}
 
+void MyFrame::ChkSeq()
+{
+	static int td = 0; // time to track delay
+	int n;
+	if (_en_seq)
+	{
+		if (td >= _currentd) {
+			td = 0; // reset time for delay
+			n = (int)_cmdLoop.size();
+			if (n > 0) {
+				if (_currentn < _repeat) {
+
+					if (_currenti < n) {
+						auto m = _cmdLoop[_currenti];
+						string gcode = m.first;
+						int dly = m.second;
+						if (_app->_com->Write((char*)gcode.c_str())) {
+							this->Write(gcode);
+							this->Write("Delay: " + to_string(dly) + " Cmd i: " + to_string(_currenti));
+						}
+						else {
+							this->Write("Error in sending " + gcode);
+						} 
+						_currentd = dly;
+						_currenti++;
+					}
+
+					// if end of cmd vector
+					if (_currenti >= n) {
+						_currenti = 0;
+						_currentn++;
+						this->Write("Command loop: " + to_string(_currentn));
+					}						
+				}
+
+				// check n after executing
+				if (_currentn >= _repeat) {
+					_en_seq = 0;
+					this->Write("Completed repeating command loop " + to_string(_repeat) + " times");
+					_app->_com->Close();
+					this->Write("Port closed:" + _app->_com->GetPort());
+				}
+			}
+			else {
+				_en_seq = 0; // no cmd
+				this->Write("Disable sequence because of the empty command loop");
+				_app->_com->Close();
+				this->Write("Port closed:" + _app->_com->GetPort());
+			}
+		}
+		else {
+			td += GS_TIMER_INT; // add interval
+		}
+	}
 }
 
 void MyFrame::ProcessChar(char ch)
@@ -256,6 +323,8 @@ void MyFrame::Write(std::string mes)
 	}
 	txtRx->Clear();
 	txtRx->AppendText(wxString::Format(wxT("%s"),txt));
+
+	_app->_log->Print(mes);
 }
 
 void MyFrame::ClearText(wxCommandEvent& WXUNUSED(event))
@@ -272,6 +341,7 @@ void MyFrame::OnSequence(wxCommandEvent& WXUNUSED(event))
 	//		return;
 	//	//else: proceed asking to the user the new file to open
 	//}
+	_dlgSeqFile->SetDirectory(ceMisc::exedir());
 
 	if (_dlgSeqFile->ShowModal() == wxID_CANCEL)
 		return;     // the user changed idea...
@@ -281,27 +351,30 @@ void MyFrame::OnSequence(wxCommandEvent& WXUNUSED(event))
 
 	try {
 		this->_seq = ceConfig::ReadJson(filePath.ToStdString());
-		ReadSeq("Loop", _cmdLoop);
+		_repeat = ReadSeq("Loop", _cmdLoop);
 	}
 	catch (...) {
 		this->Write("Error in json values");
 	}
 }
 
-void MyFrame::ReadSeq(std::string seqtag, std::vector<std::pair<std::string, uint32_t>>& cmdv)
+int MyFrame::ReadSeq(std::string seqtag, std::vector<std::pair<std::string, uint32_t>>& cmdv)
 {
+	int n = 0;
 	std::pair<std::string, int> m;
 	string cmd;
 	// read loop
 	Json::Value cseq = _seq[seqtag]["Sequence"];
 	cmdv.clear();
 	if (!cseq.isNull()) {
+		this->Write("Loaded sequence...");
 		if (cseq.isArray()) {
 			for (auto obj : cseq) {
 				cmd = obj.asString();
 				m.first = _seq[cmd]["GCode"].asString();
 				m.second = _seq[cmd]["Delay"].asUInt();
 				cmdv.push_back(m);
+				this->Write(m.first + " Delay: " + to_string(m.second));
 			}
 		}
 		else {
@@ -309,6 +382,27 @@ void MyFrame::ReadSeq(std::string seqtag, std::vector<std::pair<std::string, uin
 			m.first = _seq[cmd]["GCode"].asString();
 			m.second = _seq[cmd]["Delay"].asUInt();
 			cmdv.push_back(m);
+			this->Write(m.first + " Delay: " + to_string(m.second));
 		}
+
+		/// read repeat count
+		n = _seq[seqtag]["Repeat"].asUInt();
+
+		// read port
+#if defined(CE_WINDOWS)
+		string str = _seq["Port"]["Windows"].asString();
+#else
+		string str = _seq["Port"]["Linux"].asString();
+#endif
+		
+		if (str.length() > 0) {
+			_app->_com->SetPortName(str);
+		}
+		this->Write("Port selected: " + _app->_com->GetPort());
+
 	}
+	else {
+		this->Write(seqtag + " sequence json not found...");
+	}
+	return n;
 }
